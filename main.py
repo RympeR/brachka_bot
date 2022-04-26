@@ -16,6 +16,7 @@ from selenium.webdriver.common.keys import Keys
 from tqdm import tqdm, trange
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.options import Options
+import keyboard
 
 
 class Utils:
@@ -65,6 +66,18 @@ logger = logging.getLogger()
 logger.debug('often makes a very good meal of %s', 'visiting tourists')
 
 
+def check_is_loop_running_wrapper(func):
+
+    def wrapper(self, *args, **kwargs):
+        if self.running or func.__name__ == 'login':
+            return func(self, *args, **kwargs)
+        else:
+            print('not self.running')
+            raise KeyError
+
+    return wrapper
+
+
 class TalkytimesScrapper:
 
     MAN_IDS = []
@@ -74,21 +87,33 @@ class TalkytimesScrapper:
     def __init__(self, driver, login, password, history_file_name='man_history.json'):
         self.LOGIN = login
         self.PASSWORD = password
-        self.history_file_name = LOGIN + '_' + history_file_name
+        self.history_file_name = self.LOGIN + '_' + history_file_name
         self.driver = driver
         self.message = 'Hello {name} {city} {age} {country}'
         self.recieve_history()
         self.interval = 40
         self.running = False
         self.creds_file_name = 'creds.json'
-        self.scroll_anount = 1
+        self.scroll_anount = 5
         self.base_url = 'https://talkytimes.com/auth/login'
+        if os.path.exists(self.LOGIN + '_blacklist.json'):
+            with open(self.LOGIN + '_blacklist.json', 'r') as f_blacklist:
+                self.blacklist = json.load(f_blacklist)
+        else:
+            self.blacklist = {
+                "blacklist": []
+            }
+        keyboard.add_hotkey("esc", lambda: self.stop_srapper())
+
+    def stop_srapper(self):
+        print('setted self.running')
+        self.running = False
 
     def start(self):
         while self.running:
             try:
                 print(Fore.WHITE + 'Запуск')
-                if scrapper.driver.current_url == self.base_url:
+                if self.driver.current_url == self.base_url:
                     self.login(True)
                 self.recieve_history()
                 time.sleep(2)
@@ -112,7 +137,7 @@ class TalkytimesScrapper:
                 print('Круг завершен ожидаю')
                 for i in trange(self.interval):
                     time.sleep(1)
-            except KeyboardInterrupt:
+            except KeyError:
                 print(Fore.RED + 'Остановлен сборщик данных')
                 print(Fore.YELLOW + 'Не выключайте пока сохраняется история')
                 self.running = False
@@ -121,6 +146,14 @@ class TalkytimesScrapper:
                 print(Fore.GREEN + 'Успешно сохранено перевожу в меню')
                 time.sleep(2)
                 self.main_menu()
+        print(Fore.RED + 'Остановлен сборщик данных')
+        print(Fore.YELLOW + 'Не выключайте пока сохраняется история')
+        self.running = False
+        Utils.dump_json_into_file(
+            self.man_history, self.history_file_name)
+        print(Fore.GREEN + 'Успешно сохранено перевожу в меню')
+        time.sleep(2)
+        self.main_menu()
 
     def main_menu(self):
         os.system('cls')
@@ -132,6 +165,7 @@ class TalkytimesScrapper:
         print('Введите 5 - для того чтобы задать текущее сообщение')
         print('Введите 6 - для задания интервала')
         print('Введите 7 - для входа в аккаунт')
+        print('Введите 8 - для сохранения букмаркеда')
 
         action = input('Введите действие: ')
         if action == '1':
@@ -156,12 +190,28 @@ class TalkytimesScrapper:
             os.system('cls')
             self.set_interval()
         elif action == '7':
-            os.system('cls')
+            # os.system('cls')
             self.login()
+        elif action == '8':
+            os.system('cls')
+            self.save_saved_mans()
         else:
             print(Fore.RED + 'Неверный ввод')
             time.sleep(0.5)
             self.main_menu()
+
+    def save_saved_mans(self):
+        print(Fore.YELLOW + 'Собираю saved id')
+        print(Fore.WHITE)
+        self.enter_chat()
+
+        self.come_to_online_saved_chat()
+        for _ in trange(3):
+            self.scroll_chat_block()
+        self.collect_chat_rooms_ids(
+            True, saved_file_name=self.LOGIN + '_blacklist.json')
+        print(Fore.GREEN + 'Собрано')
+        self.main_menu()
 
     def clear_history(self):
         print(Fore.RED + 'Вы уверены?')
@@ -222,6 +272,7 @@ class TalkytimesScrapper:
         self.LOGIN = self.creds['login']
         self.PASSWORD = self.creds['password']
 
+    @check_is_loop_running_wrapper
     def login(self, auto_load=False):
         print(Fore.YELLOW + 'Вход в аккаунт')
         self.driver.get(self.base_url)
@@ -249,6 +300,7 @@ class TalkytimesScrapper:
         if not auto_load:
             self.main_menu()
 
+    @check_is_loop_running_wrapper
     def get_profile_info(self, man_id: int) -> dict:
         print(Fore.YELLOW + f'Сбор информации с профиля {man_id}')
         self.driver.get(f'https://talkytimes.com/user/id/{man_id}')
@@ -281,16 +333,30 @@ class TalkytimesScrapper:
             print(Fore.RED + f'Не найдена информация по профилю {man_id} {e}')
             return {}
 
+    @check_is_loop_running_wrapper
     def check_previous_history(self, man_id: int) -> bool:
-        if man_id in self.man_history.get(self.message.lower(), []):
-            print(Fore.RED + 'Проверка на присутствие в истории - провалена')
-            return False
+        try:
+            if man_id in self.man_history[self.message.lower()]:
+                print(Fore.RED + 'Проверка на присутствие в истории - провалена')
+                return False
+        except KeyError:
+            print(Fore.GREEN + 'Проверка на присутствие в истории - пройдена')
+            return True
         print(Fore.GREEN + 'Проверка на присутствие в истории - пройдена')
         return True
 
+    @check_is_loop_running_wrapper
+    def check_blacklist(self, man_id: int) -> bool:
+        if str(man_id) in self.blacklist.get('blacklist'):
+            print(Fore.RED + 'Проверка на присутствие в черном списке - провалена')
+            return False
+        print(Fore.GREEN + 'Проверка на присутствие в черном списке - пройдена')
+        return True
+
+    @check_is_loop_running_wrapper
     def get_left_messages(self) -> bool:
         print(Fore.YELLOW + f'Проверка лимита оставшихся сообщений')
-        time.sleep(1)
+        time.sleep(3)
         try:
             notify_elem = self.driver.find_element(
                 by=By.CLASS_NAME,
@@ -313,11 +379,13 @@ class TalkytimesScrapper:
             logging.warning(f'{e} caught in left messages retrieve')
             return False
 
+    @check_is_loop_running_wrapper
     def page_refresh(self):
         print(Fore.YELLOW + 'Обновление страницы')
         driver.refresh()
         self.toggle_online()
 
+    @check_is_loop_running_wrapper
     def check_saved(self, man_id: str):
         if man_id in self.MAN_IDS_SAVED:
             print(Fore.RED + 'Проверка на отсутствие в разделе saved - провалена')
@@ -331,6 +399,7 @@ class TalkytimesScrapper:
         self.MAN_IDS_SAVED = []
         self.MAN_URLS = {}
 
+    @check_is_loop_running_wrapper
     def filter_saved_ids(self):
         print(Fore.YELLOW + 'Фильтрация сохраненных id')
         elements = []
@@ -344,22 +413,31 @@ class TalkytimesScrapper:
             except Exception as e:
                 logging.warning(f'{e} caught in left filtering saved ids')
 
+    @check_is_loop_running_wrapper
     def man_complete_check(self, man_id: str) -> bool:
         print(Fore.YELLOW + f'Проверка условий по профилю {man_id}')
         self.driver.get(self.MAN_URLS[man_id])
         time.sleep(2)
         if not self.check_previous_history(man_id):
-            print(Fore.RED + f'Проверка профиля {man_id} - провалена')
+            print(
+                Fore.RED + f'Проверка профиля на наличии в истории {man_id} - провалена')
+            return False
+        if not self.check_blacklist(man_id):
+            print(
+                Fore.RED + f'Проверка профиля на наличии в черном списке {man_id} - провалена')
             return False
         if not self.check_saved(man_id):
-            print(Fore.RED + f'Проверка профиля {man_id} - провалена')
+            print(
+                Fore.RED + f'Проверка профиля наличия в сохраненных {man_id} - провалена')
             return False
         if not self.get_left_messages():
-            print(Fore.RED + f'Проверка профиля {man_id} - провалена')
+            print(
+                Fore.RED + f'Проверка профиля оставшиеся действия {man_id} - провалена')
             return False
         print(Fore.GREEN + f'Проверка профиля {man_id} - успешна')
         return True
 
+    @check_is_loop_running_wrapper
     def come_to_online_ongoing_chat(self):
         print(Fore.YELLOW + f'Вход в раздел ongoing')
         try:
@@ -398,14 +476,14 @@ class TalkytimesScrapper:
             logging.warning(f'{e} caught in come_to_online_saved_chat')
             pass
 
-    def enter_chat(self):
-        print(Fore.YELLOW + f'Вход в чат')
+    def enter_search(self):
+        print(Fore.YELLOW + f'Вхожу в главную страницу')
         try:
             self.driver.find_element(
                 by=By.XPATH,
-                value='/html/body/div[1]/div/div[1]/header/div/div/div[2]/div[2]/a').click()
+                value='/html/body/div[1]/div/div[1]/header/div/div/div[2]/div[1]/a').click()
             time.sleep(1)
-            print(Fore.GREEN + 'Вход в аккаунт успешен')
+            print(Fore.GREEN + 'Вход в главную страницу успешен')
         except NoSuchElementException as e:
             print(
                 Fore.RED + 'Не получилось войти в чат, обратитесь к администратору')
@@ -417,6 +495,26 @@ class TalkytimesScrapper:
             logging.warning(f'{e} caught in enter_chat')
             pass
 
+    def enter_chat(self):
+        print(Fore.YELLOW + f'Вход в чат')
+        try:
+            self.driver.find_element(
+                by=By.XPATH,
+                value='/html/body/div[1]/div/div[1]/header/div/div/div[2]/div[2]/a').click()
+            time.sleep(1)
+            print(Fore.GREEN + 'Вход в чат успешен')
+        except NoSuchElementException as e:
+            print(
+                Fore.RED + 'Не получилось войти в чат, обратитесь к администратору')
+            logging.warning(f'{e} caught in enter_chat')
+            pass
+        except ElementNotInteractableException as e:
+            print(
+                Fore.RED + 'Не получилось войти в чат, обратитесь к администратору')
+            logging.warning(f'{e} caught in enter_chat')
+            pass
+
+    @check_is_loop_running_wrapper
     def toggle_online(self):
         print(Fore.YELLOW + f'Переключение на online')
         for i in trange(10):
@@ -448,7 +546,7 @@ class TalkytimesScrapper:
             try:
                 self.driver.execute_script(
                     '''var obj = document.querySelector('.list-infinite');obj.scrollTop = obj.scrollHeight;''')
-                time.sleep(3)
+                time.sleep(2)
             except NoSuchElementException as e:
                 print(
                     Fore.RED + 'Не получилось прокрутить чат, обратитесь к администратору')
@@ -460,7 +558,7 @@ class TalkytimesScrapper:
                 logging.warning(f'{e} caught in scroll_chat_block')
                 pass
 
-    def collect_chat_rooms_ids(self, saved=False):
+    def collect_chat_rooms_ids(self, saved=False, saved_file_name=None):
         print(Fore.YELLOW + 'Сбор идентификаторов чатов')
         try:
             chat_rooms = self.driver.find_elements(by=By.CLASS_NAME,
@@ -481,6 +579,10 @@ class TalkytimesScrapper:
                 print(Fore.WHITE + "Превью" + Fore.GREEN + ' saved ' +
                       Fore.WHITE + "онлайн идентификаторов")
                 pprint(self.MAN_IDS_SAVED)
+                if saved_file_name:
+                    Utils.dump_json_into_file(
+                        {"blacklist": self.MAN_IDS_SAVED}, saved_file_name
+                    )
             else:
                 print(Fore.WHITE + "Превью" + Fore.GREEN + ' ongoing ' +
                       Fore.WHITE + "онлайн идентификаторов")
@@ -496,6 +598,7 @@ class TalkytimesScrapper:
             logging.warning(f'{e} caught in collect_chat_rooms_ids')
             pass
 
+    @check_is_loop_running_wrapper
     def send_message_in_dialog(self, url: str, message: str):
         print(Fore.WHITE + 'Отправка сообщения' + Fore.GREEN +
               f' {message}' + Fore.WHITE + f' по ссылке {url}')
@@ -534,6 +637,7 @@ class TalkytimesScrapper:
             logging.warning(f'{e} caught in collect_chat_rooms_ids')
             pass
 
+    @check_is_loop_running_wrapper
     def process_man_ids(self):
         print(Fore.YELLOW + 'Проверка мужских идентификаторов')
         self.filter_saved_ids()
@@ -562,8 +666,8 @@ class TalkytimesScrapper:
 
 if __name__ == '__main__':
     init()
-    LOGIN = input('Введите логин: ')
-    PASSWORD = input('Введите пароль: ')
+    LOGIN = input('Введите логин: ').strip()
+    PASSWORD = input('Введите пароль: ').strip()
     scrapper = TalkytimesScrapper(driver, login=LOGIN, password=PASSWORD)
     scrapper.driver.get(scrapper.base_url)
     if scrapper.driver.current_url == scrapper.base_url:
