@@ -66,11 +66,36 @@ logger = logging.getLogger()
 logger.debug('often makes a very good meal of %s', 'visiting tourists')
 
 
+def check_is_loop_paused_wrapper(func):
+
+    def wrapper(self, *args, **kwargs):
+        if not self.paused:
+            return func(self, *args, **kwargs)
+        else:
+            choice = input('1 если да, любой другой символ если нет: ')
+            if choice == '1':
+                print(Fore.RED + 'ОСТАНАВЛИВАЮ, ДОЖДИТЕСЬ СОХРАНЕНИЯ ИСТОРИИ')
+                self.paused = False
+                self.running = False
+            else:
+                self.paused = False
+    return wrapper
+
+
 def check_is_loop_running_wrapper(func):
 
     def wrapper(self, *args, **kwargs):
         if self.running or func.__name__ == 'login':
-            return func(self, *args, **kwargs)
+            if not self.paused:
+                return func(self, *args, **kwargs)
+            else:
+                choice = input('1 если да, любой другой символ если нет: ')
+                if choice == '1':
+                    print(Fore.RED + 'ОСТАНАВЛИВАЮ, ДОЖДИТЕСЬ СОХРАНЕНИЯ ИСТОРИИ')
+                    self.paused = False
+                    self.running = False
+                else:
+                    self.paused = False
         else:
             print('not self.running')
             raise KeyError
@@ -93,6 +118,7 @@ class TalkytimesScrapper:
         self.recieve_history()
         self.interval = 40
         self.running = False
+        self.paused = False
         self.creds_file_name = 'creds.json'
         self.scroll_anount = 5
         self.base_url = 'https://talkytimes.com/auth/login'
@@ -106,46 +132,50 @@ class TalkytimesScrapper:
         keyboard.add_hotkey("esc", lambda: self.stop_srapper())
 
     def stop_srapper(self):
-        print('setted self.running')
-        self.running = False
+        print(Fore.RED + 'Остановка расширения')
+        print(Fore.YELLOW + 'Вы уверены?')
+        print(Fore.WHITE)
+        self.paused = True
 
     def start(self):
         while self.running:
-            try:
-                print(Fore.WHITE + 'Запуск')
-                if self.driver.current_url == self.base_url:
-                    self.login(True)
-                self.recieve_history()
-                time.sleep(2)
-                self.enter_chat()
-                time.sleep(2)
-                self.page_refresh()
-                time.sleep(2)
-                self.come_to_online_saved_chat()
-                self.scroll_chat_block()
-                self.collect_chat_rooms_ids(True)
-                time.sleep(1)
-                self.come_to_online_ongoing_chat()
-                self.page_refresh()
-                time.sleep(1)
-                self.scroll_chat_block()
-                self.collect_chat_rooms_ids()
-                pprint(self.MAN_URLS)
-                time.sleep(2)
-                self.process_man_ids()
-                print(Fore.WHITE)
-                print('Круг завершен ожидаю')
-                for i in trange(self.interval):
+            while not self.paused:
+                try:
+                    print(Fore.WHITE + 'Запуск')
+                    if self.driver.current_url == self.base_url:
+                        self.login(True)
+                    self.recieve_history()
+                    time.sleep(2)
+                    self.enter_chat()
+                    time.sleep(2)
+                    self.page_refresh()
+                    time.sleep(2)
+                    self.come_to_online_saved_chat()
+                    self.scroll_chat_block()
+                    self.collect_chat_rooms_ids(True)
                     time.sleep(1)
-            except KeyError:
-                print(Fore.RED + 'Остановлен сборщик данных')
-                print(Fore.YELLOW + 'Не выключайте пока сохраняется история')
-                self.running = False
-                Utils.dump_json_into_file(
-                    self.man_history, self.history_file_name)
-                print(Fore.GREEN + 'Успешно сохранено перевожу в меню')
-                time.sleep(2)
-                self.main_menu()
+                    self.come_to_online_ongoing_chat()
+                    self.page_refresh()
+                    time.sleep(1)
+                    self.scroll_chat_block()
+                    self.collect_chat_rooms_ids()
+                    pprint(self.MAN_URLS)
+                    time.sleep(2)
+                    self.process_man_ids()
+                    print(Fore.WHITE)
+                    print('Круг завершен ожидаю')
+                    for i in trange(self.interval):
+                        time.sleep(1)
+                except KeyError:
+                    print(Fore.RED + 'Остановлен сборщик данных')
+                    print(Fore.YELLOW + 'Не выключайте пока сохраняется история')
+                    self.running = False
+                    Utils.dump_json_into_file(
+                        self.man_history, self.history_file_name)
+                    print(Fore.GREEN + 'Успешно сохранено перевожу в меню')
+                    time.sleep(2)
+                    self.main_menu()
+
         print(Fore.RED + 'Остановлен сборщик данных')
         print(Fore.YELLOW + 'Не выключайте пока сохраняется история')
         self.running = False
@@ -200,6 +230,7 @@ class TalkytimesScrapper:
             time.sleep(0.5)
             self.main_menu()
 
+    @check_is_loop_paused_wrapper
     def save_saved_mans(self):
         print(Fore.YELLOW + 'Собираю saved id')
         print(Fore.WHITE)
@@ -457,6 +488,7 @@ class TalkytimesScrapper:
             logging.warning(f'{e} caught in come_to_online_ongoing_chat')
             pass
 
+    @check_is_loop_paused_wrapper
     def come_to_online_saved_chat(self):
         print(Fore.YELLOW + f'Вход в раздел saved')
         try:
@@ -476,6 +508,7 @@ class TalkytimesScrapper:
             logging.warning(f'{e} caught in come_to_online_saved_chat')
             pass
 
+    @check_is_loop_paused_wrapper
     def enter_search(self):
         print(Fore.YELLOW + f'Вхожу в главную страницу')
         try:
@@ -495,6 +528,7 @@ class TalkytimesScrapper:
             logging.warning(f'{e} caught in enter_chat')
             pass
 
+    @check_is_loop_paused_wrapper
     def enter_chat(self):
         print(Fore.YELLOW + f'Вход в чат')
         try:
@@ -539,6 +573,7 @@ class TalkytimesScrapper:
                 logging.warning(f'{e} caught in toggle_online')
                 pass
 
+    @check_is_loop_paused_wrapper
     def scroll_chat_block(self):
         print(Fore.YELLOW + 'Прокрутка чата')
         print(Fore.WHITE)
@@ -558,6 +593,7 @@ class TalkytimesScrapper:
                 logging.warning(f'{e} caught in scroll_chat_block')
                 pass
 
+    @check_is_loop_paused_wrapper
     def collect_chat_rooms_ids(self, saved=False, saved_file_name=None):
         print(Fore.YELLOW + 'Сбор идентификаторов чатов')
         try:
